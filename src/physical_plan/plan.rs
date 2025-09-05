@@ -1,5 +1,7 @@
 use crate::datatypes::{AnyValue, DataFrame, DataType, Series};
 use crate::expressions::BinaryOperator;
+use crate::logical_plan::JoinType;
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -20,6 +22,13 @@ pub enum PhysicalPlan {
     Limit {
         input: Box<PhysicalPlan>,
         n: usize,
+    },
+    HashJoin {
+        build_side: Box<PhysicalPlan>,
+        probe_side: Box<PhysicalPlan>,
+        build_key: String,
+        probe_key: String,
+        join_type: JoinType,
     },
 }
 
@@ -147,7 +156,116 @@ impl PhysicalPlan {
 
                 Ok(DataFrame::new(limited_columns)?)
             }
+            Self::HashJoin {
+                build_side,
+                probe_side,
+                build_key,
+                probe_key,
+                join_type,
+            } => match join_type {
+                JoinType::Inner => {
+                    let build_df = build_side.execute()?;
+                    let build_key_series = build_df.column(&build_key).unwrap();
+
+                    let mut hash_table: HashMap<AnyValue, Vec<usize>> = HashMap::new();
+
+                    for (row_idx, key_value) in build_key_series.iter().enumerate() {
+                        hash_table
+                            .entry(key_value.clone())
+                            .or_insert_with(Vec::new)
+                            .push(row_idx);
+                    }
+
+                    let probe_df = probe_side.execute()?;
+                    let probe_key_series = probe_df.column(&probe_key).unwrap();
+
+                    let mut result_pairs = Vec::new();
+                    for (probe_idx, probe_key_value) in probe_key_series.iter().enumerate() {
+                        if let Some(build_indices) = hash_table.get(probe_key_value) {
+                            for &build_idx in build_indices {
+                                result_pairs.push((probe_idx, build_idx));
+                            }
+                        }
+                    }
+
+                    Self::materialize_join_result(probe_df, build_df, result_pairs, &build_key)
+                }
+            },
         }
+    }
+
+    fn materialize_join_result(
+        probe_df: DataFrame,
+        build_df: DataFrame,
+        pairs: Vec<(usize, usize)>,
+        build_key: &str,
+    ) -> Result<DataFrame, ExecutionError> {
+        if pairs.is_empty() {
+            return Ok(Self::create_empty_join_result(
+                &probe_df, &build_df, build_key,
+            )?);
+        }
+
+        let mut result_columns = Vec::new();
+
+        for probe_series in probe_df.columns() {
+            let selected_data: Vec<AnyValue> = pairs
+                .iter()
+                .map(|(probe_idx, _)| probe_series[*probe_idx].clone())
+                .collect();
+            result_columns.push(Series::new(probe_series.name(), selected_data)?);
+        }
+
+        for build_series in build_df.columns() {
+            if build_series.name() == build_key {
+                continue;
+            }
+
+            let selected_data: Vec<AnyValue> = pairs
+                .iter()
+                .map(|(_, build_idx)| build_series[*build_idx].clone())
+                .collect();
+
+            let final_name = if probe_df.column(build_series.name()).is_some() {
+                format!("{}_right", build_series.name())
+            } else {
+                build_series.name().to_string()
+            };
+
+            result_columns.push(Series::new(&final_name, selected_data)?);
+        }
+
+        DataFrame::new(result_columns).map_err(ExecutionError::from)
+    }
+
+    fn create_empty_join_result(
+        probe_df: &DataFrame,
+        build_df: &DataFrame,
+        build_key: &str,
+    ) -> Result<DataFrame, ExecutionError> {
+        let mut empty_columns = Vec::new();
+
+        for probe_series in probe_df.columns() {
+            let empty_series = Series::empty(probe_series.name(), probe_series.dtype().clone());
+            empty_columns.push(empty_series);
+        }
+
+        for build_series in build_df.columns() {
+            if build_series.name() == build_key {
+                continue;
+            }
+
+            let final_name = if probe_df.column(build_series.name()).is_some() {
+                format!("{}_right", build_series.name())
+            } else {
+                build_series.name().to_string()
+            };
+
+            let empty_series = Series::empty(&final_name, build_series.dtype().clone());
+            empty_columns.push(empty_series);
+        }
+
+        DataFrame::new(empty_columns).map_err(ExecutionError::from)
     }
 }
 

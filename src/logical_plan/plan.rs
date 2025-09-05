@@ -22,6 +22,21 @@ pub enum LogicalPlan {
         input: Box<LogicalPlan>,
         n: usize,
     },
+    Join {
+        left: Box<LogicalPlan>,
+        right: Box<LogicalPlan>,
+        left_key: String,
+        right_key: String,
+        join_type: JoinType,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum JoinType {
+    Inner,
+    //Left,
+    //Right,
+    //Outer,
 }
 
 #[derive(Debug, Error)]
@@ -30,13 +45,18 @@ pub enum LogicalPlanError {
     ColumnNotFound { name: String },
     #[error("Invalid limit: '{limit}'")]
     InvalidLimit { limit: usize },
+    #[error("Incompatible join key types: '{left_type:?}' and '{right_type:?}'")]
+    IncompatibleJoinKeys {
+        left_type: DataType,
+        right_type: DataType,
+    },
 }
 
 impl LogicalPlan {
     pub fn schema(&self) -> Vec<(String, DataType)> {
         match self {
-            LogicalPlan::DataFrameSource { schema, .. } => schema.clone(),
-            LogicalPlan::Select { input, expressions } => {
+            Self::DataFrameSource { schema, .. } => schema.clone(),
+            Self::Select { input, expressions } => {
                 let input_schema = input.schema();
 
                 let mut result_schema = Vec::new();
@@ -46,14 +66,47 @@ impl LogicalPlan {
                 }
                 result_schema
             }
-            LogicalPlan::Filter { input, .. } => input.schema(),
-            LogicalPlan::Limit { input, .. } => input.schema(),
+            Self::Filter { input, .. } => input.schema(),
+            Self::Limit { input, .. } => input.schema(),
+            Self::Join {
+                left,
+                right,
+                left_key: _,
+                right_key,
+                join_type,
+            } => {
+                let left_schema = left.schema();
+                let right_schema = right.schema();
+
+                let mut result_schema = left_schema.clone();
+
+                match join_type {
+                    JoinType::Inner => {
+                        for (right_col, right_type) in right_schema {
+                            if right_col == *right_key {
+                                continue;
+                            }
+
+                            let final_name =
+                                if left_schema.iter().any(|(name, _)| name == &right_col) {
+                                    format!("{}_right", right_col)
+                                } else {
+                                    right_col
+                                };
+
+                            result_schema.push((final_name, right_type));
+                        }
+
+                        result_schema
+                    }
+                }
+            }
         }
     }
 
     pub fn validate(&self) -> Result<(), LogicalPlanError> {
         match self {
-            LogicalPlan::DataFrameSource { df, schema } => {
+            Self::DataFrameSource { df, schema } => {
                 let df_names: HashSet<&str> = df.column_names().into_iter().collect();
                 for (schema_name, _) in schema {
                     if !df_names.contains(schema_name.as_str()) {
@@ -64,7 +117,7 @@ impl LogicalPlan {
                 }
                 Ok(())
             }
-            LogicalPlan::Select { input, expressions } => {
+            Self::Select { input, expressions } => {
                 input.validate()?;
 
                 let input_schema = input.schema();
@@ -74,7 +127,7 @@ impl LogicalPlan {
 
                 Ok(())
             }
-            LogicalPlan::Filter { input, predicate } => {
+            Self::Filter { input, predicate } => {
                 input.validate()?;
 
                 let input_schema = input.schema();
@@ -82,11 +135,56 @@ impl LogicalPlan {
 
                 Ok(())
             }
-            LogicalPlan::Limit { input, n } => {
+            Self::Limit { input, .. } => {
                 input.validate()?;
 
-                if *n == 0 {
+                /*if *n == 0 {
                     return Err(LogicalPlanError::InvalidLimit { limit: *n });
+                }*/
+
+                Ok(())
+            }
+            Self::Join {
+                right,
+                left,
+                right_key,
+                left_key,
+                ..
+            } => {
+                right.validate()?;
+                left.validate()?;
+
+                let left_schema = left.schema();
+                if !left_schema.iter().any(|(col, _)| col == left_key) {
+                    return Err(LogicalPlanError::ColumnNotFound {
+                        name: left_key.clone(),
+                    });
+                }
+
+                let right_schema = right.schema();
+                if !right_schema.iter().any(|(col, _)| col == right_key) {
+                    return Err(LogicalPlanError::ColumnNotFound {
+                        name: right_key.clone(),
+                    });
+                }
+
+                let left_key_type = left_schema
+                    .iter()
+                    .find(|(col, _)| col == left_key)
+                    .map(|(_, dtype)| dtype)
+                    .unwrap();
+
+                let right_key_type = right_schema
+                    .iter()
+                    .find(|(col, _)| col == right_key)
+                    .map(|(_, dtype)| dtype)
+                    .unwrap();
+
+                if !left_key_type.is_comparable_with(right_key_type) {
+                    return Err(LogicalPlanError::IncompatibleJoinKeys {
+                        left_type: left_key_type.clone(),
+                        right_type: right_key_type.clone(),
+                    });
                 }
 
                 Ok(())

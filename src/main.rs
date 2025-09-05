@@ -57,8 +57,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3. Query con alias: SELECT name, age as user_age WHERE score >= 90
     println!("Query 2: SELECT name, age as user_age WHERE score >= 90");
     let result2 = LazyFrame::from_dataframe(df.clone())
-        .select(vec![Expr::col("name"), Expr::col("age").alias("user_age")])
         .filter(Expr::col("score").gte(Expr::lit(90.0)))
+        .select(vec![
+            Expr::col("name"),
+            Expr::col("age"), /*.alias("user_age")*/
+        ]) //alias bug
         .collect()?;
 
     println!("Result:");
@@ -92,6 +95,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Result:");
     println!("{}\n", result5);
+
+    println!("Query 6: Inner Join - Users with their Orders");
+    // Crea tabella users
+    let user_ids = Series::new(
+        "user_id",
+        vec![
+            AnyValue::Int64(1),
+            AnyValue::Int64(2),
+            AnyValue::Int64(3),
+            AnyValue::Int64(4),
+        ],
+    )?;
+
+    let user_names = Series::new(
+        "name",
+        vec![
+            AnyValue::String("Alice".to_string()),
+            AnyValue::String("Bob".to_string()),
+            AnyValue::String("Charlie".to_string()),
+            AnyValue::String("Diana".to_string()),
+        ],
+    )?;
+
+    let user_cities = Series::new(
+        "city",
+        vec![
+            AnyValue::String("NYC".to_string()),
+            AnyValue::String("LA".to_string()),
+            AnyValue::String("Chicago".to_string()),
+            AnyValue::String("Boston".to_string()),
+        ],
+    )?;
+
+    let users_df = DataFrame::new(vec![user_ids, user_names, user_cities])?;
+
+    // Crea tabella orders
+    let order_ids = Series::new(
+        "order_id",
+        vec![
+            AnyValue::Int64(101),
+            AnyValue::Int64(102),
+            AnyValue::Int64(103),
+            AnyValue::Int64(104),
+            AnyValue::Int64(105),
+        ],
+    )?;
+
+    let order_user_ids = Series::new(
+        "user_id",
+        vec![
+            AnyValue::Int64(1),  // Alice
+            AnyValue::Int64(2),  // Bob
+            AnyValue::Int64(1),  // Alice again
+            AnyValue::Int64(3),  // Charlie
+            AnyValue::Int64(99), // User che non esiste
+        ],
+    )?;
+
+    let amounts = Series::new(
+        "amount",
+        vec![
+            AnyValue::Float64(25.99),
+            AnyValue::Float64(15.50),
+            AnyValue::Float64(99.99),
+            AnyValue::Float64(45.00),
+            AnyValue::Float64(12.99),
+        ],
+    )?;
+
+    let orders_df = DataFrame::new(vec![order_ids, order_user_ids, amounts])?;
+
+    println!("Users table:");
+    println!("{}\n", users_df);
+    println!("Orders table:");
+    println!("{}\n", orders_df);
+
+    // JOIN: SELECT * FROM users u INNER JOIN orders o ON u.user_id = o.user_id
+    let join_result = LazyFrame::from_dataframe(users_df.clone())
+        .inner_join(
+            LazyFrame::from_dataframe(orders_df.clone()),
+            "user_id".to_string(),
+            "user_id".to_string(),
+        )
+        .collect()?;
+
+    println!("Join Result (users with orders):");
+    println!("{}\n", join_result);
+
+    // 7. Join con Select: mostra solo alcune colonne
+    println!("Query 7: Join + Select - Show only name and amount");
+    let join_select_result = LazyFrame::from_dataframe(users_df.clone())
+        .inner_join(
+            LazyFrame::from_dataframe(orders_df.clone()),
+            "user_id".to_string(),
+            "user_id".to_string(),
+        )
+        .select(vec![
+            Expr::col("name"),
+            Expr::col("amount"),
+            Expr::col("city"),
+        ])
+        .collect()?;
+
+    println!("Result:");
+    println!("{}\n", join_select_result);
 
     println!("=== Demo completed successfully! ===");
 

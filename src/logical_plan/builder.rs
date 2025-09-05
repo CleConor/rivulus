@@ -1,6 +1,6 @@
 use crate::datatypes::dataframe::DataFrame;
 use crate::expressions::expr::Expr;
-use crate::logical_plan::plan::{LogicalPlan, LogicalPlanError};
+use crate::logical_plan::plan::{JoinType, LogicalPlan, LogicalPlanError};
 use crate::physical_plan::logical_to_physical;
 use thiserror::Error;
 
@@ -55,6 +55,18 @@ impl LazyFrame {
             logical_plan: LogicalPlan::Limit {
                 input: Box::new(self.logical_plan),
                 n,
+            },
+        }
+    }
+
+    pub fn inner_join(self, right: LazyFrame, left_key: String, right_key: String) -> Self {
+        Self {
+            logical_plan: LogicalPlan::Join {
+                left: Box::new(self.logical_plan),
+                right: Box::new(right.logical_plan),
+                left_key,
+                right_key,
+                join_type: JoinType::Inner,
             },
         }
     }

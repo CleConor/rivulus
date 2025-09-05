@@ -78,6 +78,26 @@ pub fn logical_to_physical(logical: LogicalPlan) -> Result<PhysicalPlan, Convers
                 n,
             })
         }
+        LogicalPlan::Join {
+            left,
+            right,
+            left_key,
+            right_key,
+            join_type,
+        } => {
+            let physical_left = Box::new(logical_to_physical(*left)?);
+            let physical_right = Box::new(logical_to_physical(*right)?);
+
+            //smallest in build side, because in theory build side must stay in memory
+            //not now
+            Ok(PhysicalPlan::HashJoin {
+                build_side: physical_left,
+                probe_side: physical_right,
+                build_key: left_key,
+                probe_key: right_key,
+                join_type,
+            })
+        }
     }
 }
 

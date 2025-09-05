@@ -1,8 +1,9 @@
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum AnyValue {
     Null,
     Int64(i64),
@@ -65,6 +66,33 @@ impl fmt::Display for AnyValue {
             Self::Float64(v) => write!(f, "{}", v),
             Self::String(v) => write!(f, "{}", v),
             Self::Boolean(v) => write!(f, "{}", v),
+        }
+    }
+}
+
+impl Hash for AnyValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            AnyValue::Null => 0.hash(state),
+            AnyValue::Int64(v) => v.hash(state),
+            AnyValue::Float64(v) => v.to_bits().hash(state),
+            AnyValue::String(v) => v.hash(state),
+            AnyValue::Boolean(v) => v.hash(state),
+        }
+    }
+}
+
+impl Eq for AnyValue {}
+
+impl PartialEq for AnyValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AnyValue::Null, AnyValue::Null) => true,
+            (AnyValue::Int64(a), AnyValue::Int64(b)) => a == b,
+            (AnyValue::Float64(a), AnyValue::Float64(b)) => a == b,
+            (AnyValue::String(a), AnyValue::String(b)) => a == b,
+            (AnyValue::Boolean(a), AnyValue::Boolean(b)) => a == b,
+            _ => false,
         }
     }
 }
