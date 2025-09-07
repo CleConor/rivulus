@@ -11,7 +11,7 @@ Currently implements basic query operations (select, filter, limit) with a simpl
 ## Features
 
 - Basic DataFrame operations
-- Lazy evaluation with fluent API
+- Fluent API
 - Simple expression system
 - Logical and physical query planning
 - Support for basic data types (Int64, Float64, String, Boolean)
