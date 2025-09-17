@@ -160,8 +160,8 @@ impl PhysicalPlan {
                 build_side,
                 probe_side,
                 build_key,
-                probe_key,
-                join_type,
+                ref probe_key,
+                ref join_type,
             } => match join_type {
                 JoinType::Inner => {
                     let build_df = build_side.execute()?;

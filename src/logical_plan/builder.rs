@@ -1,5 +1,6 @@
 use crate::datatypes::dataframe::DataFrame;
 use crate::expressions::expr::Expr;
+use crate::logical_plan::QueryOptimizer;
 use crate::logical_plan::plan::{JoinType, LogicalPlan, LogicalPlanError};
 use crate::physical_plan::logical_to_physical;
 use thiserror::Error;
@@ -72,8 +73,9 @@ impl LazyFrame {
     }
 
     pub fn collect(self) -> Result<DataFrame, QueryError> {
-        self.logical_plan.validate()?;
-        let physical_plan = logical_to_physical(self.logical_plan)
+        let optimized_plan = QueryOptimizer::optimize(self.logical_plan);
+        optimized_plan.validate()?;
+        let physical_plan = logical_to_physical(optimized_plan)
             .map_err(|e| QueryError::ExecutionError(e.to_string()))?;
         physical_plan
             .execute()

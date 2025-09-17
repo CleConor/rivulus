@@ -105,8 +105,8 @@ fn convert_select_expr(expr: &Expr) -> Result<String, ConversionError> {
     match expr {
         Expr::Column(name) => Ok(name.clone()),
 
-        Expr::Alias(inner_expr, alias) => match inner_expr.as_ref() {
-            Expr::Column(_) => Ok(alias.clone()),
+        Expr::Alias(inner_expr, _alias) => match inner_expr.as_ref() {
+            Expr::Column(original_name) => Ok(original_name.clone()),
             _ => Err(ConversionError::UnsupportedExpression {
                 expr: format!("{:?}", expr),
             }),

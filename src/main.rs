@@ -58,10 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Query 2: SELECT name, age as user_age WHERE score >= 90");
     let result2 = LazyFrame::from_dataframe(df.clone())
         .filter(Expr::col("score").gte(Expr::lit(90.0)))
-        .select(vec![
-            Expr::col("name"),
-            Expr::col("age"), /*.alias("user_age")*/
-        ]) //alias bug
+        .select(vec![Expr::col("name"), Expr::col("age").alias("user_age")]) //alias bug
         .collect()?;
 
     println!("Result:");
