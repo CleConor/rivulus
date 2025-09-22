@@ -50,7 +50,6 @@ impl<T: PrimitiveType> PrimitiveArray<T> {
 
         let logical_index = self.offset + index;
 
-        // Check null bitmap first
         if let Some(bitmap) = &self.null_bitmap {
             if !bitmap.get_bit(logical_index) {
                 return None;
@@ -66,6 +65,17 @@ impl<T: PrimitiveType> PrimitiveArray<T> {
 
     pub fn null_bitmap(&self) -> Option<&BitMap> {
         self.null_bitmap.as_deref()
+    }
+
+    pub fn iter(&self) -> PrimitiveArrayIter<T> {
+        PrimitiveArrayIter {
+            array: self,
+            index: 0,
+        }
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.values.len() * std::mem::size_of::<T>()
     }
 }
 
@@ -108,6 +118,88 @@ impl<T: PrimitiveType> Array for PrimitiveArray<T> {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+pub struct PrimitiveArrayIter<'a, T> {
+    array: &'a PrimitiveArray<T>,
+    index: usize,
+}
+
+impl<'a, T: PrimitiveType> Iterator for PrimitiveArrayIter<'a, T> {
+    type Item = Option<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.array.length {
+            None
+        } else {
+            let value = self.array.value(self.index);
+            self.index += 1;
+            Some(value)
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.array.length - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<'a, T: PrimitiveType> ExactSizeIterator for PrimitiveArrayIter<'a, T> {}
+
+pub struct PrimitiveArrayBuilder<T> {
+    values: Vec<T>,
+    null_builder: super::bitmap::BitmapBuilder,
+}
+
+impl<T: PrimitiveType> PrimitiveArrayBuilder<T> {
+    pub fn new() -> Self {
+        PrimitiveArrayBuilder {
+            values: Vec::new(),
+            null_builder: super::bitmap::BitmapBuilder::new(),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        PrimitiveArrayBuilder {
+            values: Vec::with_capacity(capacity),
+            null_builder: super::bitmap::BitmapBuilder::with_capacity(capacity),
+        }
+    }
+
+    pub fn append_value(&mut self, value: T) {
+        self.null_builder.append(true);
+        self.values.push(value);
+    }
+
+    pub fn append_null(&mut self, placeholder: T) {
+        self.null_builder.append(false);
+        self.values.push(placeholder);
+    }
+
+    pub fn finish(self) -> PrimitiveArray<T> {
+        let null_bitmap = if self.null_builder.has_nulls() {
+            Some(Arc::new(self.null_builder.finish()))
+        } else {
+            None
+        };
+
+        let length = self.values.len();
+
+        PrimitiveArray {
+            values: Arc::from(self.values),
+            null_bitmap,
+            data_type: T::DATA_TYPE,
+            offset: 0,
+            length,
+            cached_null_count: AtomicUsize::new(UNINITIALIZED_NULL_COUNT),
+        }
+    }
+}
+
+impl<T: PrimitiveType> Default for PrimitiveArrayBuilder<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -423,5 +515,131 @@ mod tests {
 
         // Cache should be significantly faster
         assert!(second_duration < first_duration / 2);
+    }
+
+    #[test]
+    fn test_iterator() {
+        let values = vec![1i64, 2, 3, 4, 5];
+        let validity = vec![true, false, true, false, true];
+        let array = PrimitiveArray::new(values, Some(validity));
+
+        let collected: Vec<Option<i64>> = array.iter().collect();
+        assert_eq!(collected, vec![Some(1), None, Some(3), None, Some(5)]);
+    }
+
+    #[test]
+    fn test_iterator_no_nulls() {
+        let values = vec![10i64, 20, 30];
+        let array = PrimitiveArray::from_values(values);
+
+        let collected: Vec<Option<i64>> = array.iter().collect();
+        assert_eq!(collected, vec![Some(10), Some(20), Some(30)]);
+    }
+
+    #[test]
+    fn test_iterator_empty() {
+        let array = PrimitiveArray::<i64>::new(vec![], None);
+        let collected: Vec<Option<i64>> = array.iter().collect();
+        assert_eq!(collected, vec![]);
+    }
+
+    #[test]
+    fn test_primitive_array_builder() {
+        let mut builder = PrimitiveArrayBuilder::<i64>::new();
+
+        builder.append_value(10);
+        builder.append_null(0); // Placeholder
+        builder.append_value(20);
+        builder.append_value(30);
+        builder.append_null(0); // Placeholder
+
+        let array = builder.finish();
+
+        assert_eq!(array.len(), 5);
+        assert_eq!(array.null_count(), 2);
+
+        assert_eq!(array.value(0), Some(10));
+        assert_eq!(array.value(1), None);
+        assert_eq!(array.value(2), Some(20));
+        assert_eq!(array.value(3), Some(30));
+        assert_eq!(array.value(4), None);
+    }
+
+    #[test]
+    fn test_primitive_array_builder_with_capacity() {
+        let mut builder = PrimitiveArrayBuilder::<f64>::with_capacity(100);
+
+        for i in 0..50 {
+            if i % 3 == 0 {
+                builder.append_null(0.0);
+            } else {
+                builder.append_value(i as f64 * 1.5);
+            }
+        }
+
+        let array = builder.finish();
+        assert_eq!(array.len(), 50);
+        assert_eq!(array.data_type(), &DataType::Float64);
+
+        let expected_nulls = (0..50).filter(|i| i % 3 == 0).count();
+        assert_eq!(array.null_count(), expected_nulls);
+    }
+
+    #[test]
+    fn test_primitive_array_builder_no_nulls() {
+        let mut builder = PrimitiveArrayBuilder::<i64>::new();
+
+        for i in 1..=5 {
+            builder.append_value(i * 10);
+        }
+
+        let array = builder.finish();
+        assert_eq!(array.len(), 5);
+        assert_eq!(array.null_count(), 0);
+        assert!(array.null_bitmap.is_none());
+
+        for i in 0..5 {
+            assert_eq!(array.value(i), Some((i as i64 + 1) * 10));
+        }
+    }
+
+    #[test]
+    fn test_total_bytes() {
+        let values = vec![1i64, 2, 3, 4, 5];
+        let array = PrimitiveArray::new(values, None);
+
+        // i64 = 8 bytes, 5 elements = 40 bytes
+        assert_eq!(array.total_bytes(), 40);
+
+        let float_values = vec![1.0f64, 2.0, 3.0];
+        let float_array = PrimitiveArray::new(float_values, None);
+
+        // f64 = 8 bytes, 3 elements = 24 bytes
+        assert_eq!(float_array.total_bytes(), 24);
+    }
+
+    #[test]
+    fn test_iterator_size_hint() {
+        let values = vec![1i64, 2, 3, 4, 5];
+        let array = PrimitiveArray::new(values, None);
+
+        let mut iter = array.iter();
+        assert_eq!(iter.size_hint(), (5, Some(5)));
+
+        iter.next();
+        assert_eq!(iter.size_hint(), (4, Some(4)));
+
+        iter.next();
+        iter.next();
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+    }
+
+    #[test]
+    fn test_builder_default() {
+        let builder = PrimitiveArrayBuilder::<i64>::default();
+        let array = builder.finish();
+
+        assert_eq!(array.len(), 0);
+        assert_eq!(array.null_count(), 0);
     }
 }

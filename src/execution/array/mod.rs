@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 pub mod bitmap;
 pub mod primitive;
+pub mod string;
+pub mod boolean;
+pub mod null;
 
 pub trait Array: Send + Sync + std::fmt::Debug {
     fn len(&self) -> usize;
@@ -14,9 +17,7 @@ pub trait Array: Send + Sync + std::fmt::Debug {
 
 pub type ArrayRef = Arc<dyn Array>;
 
-//pub(crate) use bitmap::BitMap;
-
-pub use primitive::PrimitiveArray;
-// pub use string::StringArray;
-// pub use boolean::BooleanArray;
-// pub use null::NullArray;
+pub use primitive::{PrimitiveArray, PrimitiveArrayBuilder, PrimitiveArrayIter};
+pub use string::{StringArray, StringArrayIter, StringBuilder};
+pub use boolean::{BooleanArray, BooleanArrayBuilder, BooleanArrayIter};
+pub use null::{NullArray, NullArrayBuilder, NullArrayIter};

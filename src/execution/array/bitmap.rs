@@ -17,6 +17,30 @@ impl BitMap {
             offset: 0,
         }
     }
+
+    pub fn all_true(bit_count: usize) -> Self {
+        let byte_count = (bit_count + 7) / 8;
+        let mut buffer = vec![0xFFu8; byte_count];
+
+        if bit_count % 8 != 0 {
+            let last_byte_bits = bit_count % 8;
+            let mask = (1u8 << last_byte_bits) - 1;
+            if let Some(last_byte) = buffer.last_mut() {
+                *last_byte = mask;
+            }
+        }
+
+        Self {
+            buffer: Arc::from(buffer),
+            bit_count,
+            offset: 0,
+        }
+    }
+
+    pub fn all_false(bit_count: usize) -> Self {
+        Self::new(bit_count)
+    }
+
     pub fn from_bool_slice(values: &[bool]) -> Self {
         let byte_count = (values.len() + 7) / 8;
         let mut buffer = vec![0u8; byte_count];
@@ -85,6 +109,88 @@ impl BitMap {
             bit_count: length,
             offset: offset + self.offset,
         }
+    }
+}
+
+pub struct BitmapBuilder {
+    buffer: Vec<u8>,
+    bit_count: usize,
+    current_byte: u8,
+    current_bit_pos: usize,
+}
+
+impl BitmapBuilder {
+    pub fn new() -> Self {
+        BitmapBuilder {
+            buffer: Vec::new(),
+            bit_count: 0,
+            current_byte: 0,
+            current_bit_pos: 0,
+        }
+    }
+
+    pub fn with_capacity(capacity_bits: usize) -> Self {
+        let byte_capacity = (capacity_bits + 7) / 8;
+        BitmapBuilder {
+            buffer: Vec::with_capacity(byte_capacity),
+            bit_count: 0,
+            current_byte: 0,
+            current_bit_pos: 0,
+        }
+    }
+
+    pub fn append(&mut self, value: bool) {
+        if value {
+            self.current_byte |= 1 << self.current_bit_pos;
+        }
+
+        self.current_bit_pos += 1;
+        self.bit_count += 1;
+
+        if self.current_bit_pos == 8 {
+            self.buffer.push(self.current_byte);
+            self.current_byte = 0;
+            self.current_bit_pos = 0;
+        }
+    }
+
+    pub fn has_nulls(&self) -> bool {
+        if self.bit_count == 0 {
+            return false;
+        }
+
+        for &byte in &self.buffer {
+            if byte != 0xFF {
+                return true;
+            }
+        }
+
+        if self.current_bit_pos > 0 {
+            let expected_mask = (1u8 << self.current_bit_pos) - 1;
+            if self.current_byte != expected_mask {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn finish(mut self) -> BitMap {
+        if self.current_bit_pos > 0 {
+            self.buffer.push(self.current_byte);
+        }
+
+        BitMap {
+            buffer: Arc::from(self.buffer),
+            bit_count: self.bit_count,
+            offset: 0,
+        }
+    }
+}
+
+impl Default for BitmapBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
