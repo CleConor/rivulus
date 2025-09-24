@@ -46,14 +46,17 @@ pub fn logical_to_physical(logical: LogicalPlan) -> Result<PhysicalPlan, Convers
             let physical_input = Box::new(logical_to_physical(*input)?);
 
             let mut columns = Vec::new();
+            let mut final_names = Vec::new();
             for expr in expressions {
-                let column_name = convert_select_expr(&expr)?;
-                columns.push(column_name);
+                let (source_column, final_name) = convert_select_expr(&expr)?;
+                columns.push(source_column);
+                final_names.push(final_name);
             }
 
             Ok(PhysicalPlan::Select {
                 input: physical_input,
                 columns,
+                final_names,
             })
         }
 
@@ -101,12 +104,12 @@ pub fn logical_to_physical(logical: LogicalPlan) -> Result<PhysicalPlan, Convers
     }
 }
 
-fn convert_select_expr(expr: &Expr) -> Result<String, ConversionError> {
+fn convert_select_expr(expr: &Expr) -> Result<(String, String), ConversionError> {
     match expr {
-        Expr::Column(name) => Ok(name.clone()),
+        Expr::Column(name) => Ok((name.clone(), name.clone())),
 
-        Expr::Alias(inner_expr, _alias) => match inner_expr.as_ref() {
-            Expr::Column(original_name) => Ok(original_name.clone()),
+        Expr::Alias(inner_expr, alias) => match inner_expr.as_ref() {
+            Expr::Column(original_name) => Ok((original_name.clone(), alias.clone())),
             _ => Err(ConversionError::UnsupportedExpression {
                 expr: format!("{:?}", expr),
             }),
@@ -246,7 +249,8 @@ mod tests {
         let columns = vec!["name".to_string(), "age".to_string()];
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
-            columns,
+            columns: columns.clone(),
+            final_names: columns,
         };
 
         match plan {
@@ -323,6 +327,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string()],
+            final_names: vec!["name".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -345,6 +350,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string(), "age".to_string()],
+            final_names: vec!["name".to_string(), "age".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -363,6 +369,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["score".to_string(), "name".to_string(), "age".to_string()],
+            final_names: vec!["score".to_string(), "name".to_string(), "age".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -379,6 +386,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["nonexistent".to_string()],
+            final_names: vec!["nonexistent".to_string()],
         };
 
         let result = plan.execute();
@@ -569,6 +577,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string(), "age".to_string(), "score".to_string()],
+            final_names: vec!["name".to_string(), "age".to_string(), "score".to_string()],
         };
 
         let filter = PhysicalPlan::Filter {
@@ -609,6 +618,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(filter),
             columns: vec!["name".to_string(), "score".to_string()],
+            final_names: vec!["name".to_string(), "score".to_string()],
         };
 
         let result = select.execute().expect("Execution should succeed");
@@ -643,6 +653,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(bad_filter),
             columns: vec!["name".to_string()],
+            final_names: vec!["name".to_string()],
         };
 
         let result = select.execute();

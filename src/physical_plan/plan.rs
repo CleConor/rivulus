@@ -12,6 +12,7 @@ pub enum PhysicalPlan {
     Select {
         input: Box<PhysicalPlan>,
         columns: Vec<String>,
+        final_names: Vec<String>,
     },
     Filter {
         input: Box<PhysicalPlan>,
@@ -64,7 +65,7 @@ impl PhysicalPlan {
     pub fn execute(self) -> Result<DataFrame, ExecutionError> {
         match self {
             Self::DataFrameSource { df } => Ok(df),
-            Self::Select { input, columns } => {
+            Self::Select { input, columns, final_names } => {
                 let input_df = input.execute()?;
 
                 for col_name in &columns {
@@ -75,9 +76,18 @@ impl PhysicalPlan {
                     }
                 }
 
-                input_df
+                let selected_df = input_df
                     .select(&columns.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-                    .map_err(ExecutionError::from)
+                    .map_err(ExecutionError::from)?;
+
+                let mut renamed_columns = Vec::new();
+                for (series, final_name) in selected_df.columns().iter().zip(final_names.iter()) {
+                    let renamed_series = Series::new(final_name, series.iter().cloned().collect::<Vec<_>>())
+                        .map_err(ExecutionError::from)?;
+                    renamed_columns.push(renamed_series);
+                }
+
+                DataFrame::new(renamed_columns).map_err(ExecutionError::from)
             }
             Self::Filter {
                 input,
@@ -335,7 +345,8 @@ mod tests {
         let columns = vec!["name".to_string(), "age".to_string()];
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
-            columns,
+            columns: columns.clone(),
+            final_names: columns,
         };
 
         match plan {
@@ -412,6 +423,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string()],
+            final_names: vec!["name".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -434,6 +446,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string(), "age".to_string()],
+            final_names: vec!["name".to_string(), "age".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -452,6 +465,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["score".to_string(), "name".to_string(), "age".to_string()],
+            final_names: vec!["score".to_string(), "name".to_string(), "age".to_string()],
         };
 
         let result = plan.execute().expect("Execution should succeed");
@@ -468,6 +482,7 @@ mod tests {
         let plan = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["nonexistent".to_string()],
+            final_names: vec!["nonexistent".to_string()],
         };
 
         let result = plan.execute();
@@ -658,6 +673,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(source),
             columns: vec!["name".to_string(), "age".to_string(), "score".to_string()],
+            final_names: vec!["name".to_string(), "age".to_string(), "score".to_string()],
         };
 
         let filter = PhysicalPlan::Filter {
@@ -698,6 +714,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(filter),
             columns: vec!["name".to_string(), "score".to_string()],
+            final_names: vec!["name".to_string(), "score".to_string()],
         };
 
         let result = select.execute().expect("Execution should succeed");
@@ -732,6 +749,7 @@ mod tests {
         let select = PhysicalPlan::Select {
             input: Box::new(bad_filter),
             columns: vec!["name".to_string()],
+            final_names: vec!["name".to_string()],
         };
 
         let result = select.execute();

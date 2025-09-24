@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Query 2: SELECT name, age as user_age WHERE score >= 90");
     let result2 = LazyFrame::from_dataframe(df.clone())
         .filter(Expr::col("score").gte(Expr::lit(90.0)))
-        .select(vec![Expr::col("name"), Expr::col("age").alias("user_age")]) //alias bug
+        .select(vec![Expr::col("name"), Expr::col("age").alias("user_age")])
         .collect()?;
 
     println!("Result:");
@@ -197,6 +197,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Result:");
     println!("{}\n", join_select_result);
+
+    // 8. Streaming Examples - New streaming system
+    println!("=== Streaming System Examples ===\n");
+
+    // Example 1: Basic streaming with early termination
+    println!("Streaming Example 1: Basic streaming with LIMIT 2");
+    let streaming_result1 = LazyFrame::from_dataframe(users_df.clone())
+        .select(vec![Expr::col("name"), Expr::col("city")])
+        .limit(2)
+        .collect_streaming()?;
+
+    // Example 1b: Test alias with streaming
+    println!("Streaming Example 1b: Test alias with streaming");
+    let streaming_result1b = LazyFrame::from_dataframe(users_df.clone())
+        .select(vec![Expr::col("name"), Expr::col("city").alias("location")])
+        .limit(2)
+        .collect_streaming()?;
+
+    println!("Streaming Result:");
+    println!("{:?}\n", streaming_result1);
+
+    println!("Streaming Result with alias:");
+    println!("{:?}\n", streaming_result1b);
+
+    // Example 2: Streaming with filter and select
+    println!("Streaming Example 2: Filter + Select with streaming");
+    let streaming_result2 = LazyFrame::from_dataframe(orders_df.clone())
+        .filter(Expr::col("amount").gt(Expr::lit(20.0)))
+        .select(vec![Expr::col("order_id"), Expr::col("amount")])
+        .collect_streaming()?;
+
+    println!("Streaming Result:");
+    println!("{:?}\n", streaming_result2);
 
     println!("=== Demo completed successfully! ===");
 
