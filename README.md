@@ -6,15 +6,37 @@ A simple query engine implementation in Rust, inspired by [Polars](https://pola.
 
 **⚠️ This is an incomplete and unoptimized version.**
 
-Currently implements basic query operations (select, filter, limit) with a simplified execution model. Before adding more complex operations (joins, aggregations, window functions), the focus is on optimizing and parallelizing the existing codebase.
+Currently implements basic query operations (select, filter, limit) with both traditional eager execution and a new streaming execution engine. Recent additions include:
+
+- ✅ **Streaming execution system** with lazy evaluation and early termination
+- ✅ **Memory-efficient array implementations** (BitMap-backed BooleanArray, NullArray, zero-copy slicing)
+- ✅ **RecordBatch-based processing** with Arrow-compatible memory layout
+- 🔄 **In progress**: FileStream implementation with adaptive batch sizing
+- ⏳ **Planned**: Memory optimizations, parallelization, and advanced operations
+
+**Note**: The streaming system currently supports basic operations only. Complex operations (joins, aggregations, binary expressions in filters) still need implementation.
 
 ## Features
 
+### Core Query Engine
 - Basic DataFrame operations
-- Fluent API
-- Simple expression system
+- Fluent API with lazy evaluation
+- Expression system
 - Logical and physical query planning
 - Support for basic data types (Int64, Float64, String, Boolean)
+
+### Streaming Execution Engine
+- **Lazy evaluation** with early termination (LIMIT operations)
+- **Memory-bounded processing** using RecordBatch chunking
+- **Zero-copy operations** where possible
+- **Dual execution modes**: `collect()` for traditional, `collect_streaming()` for streaming
+
+### Memory-Efficient Arrays
+- **BooleanArray**: BitMap-backed storage with 8x memory savings
+- **PrimitiveArray<T>**: Generic arrays for numeric types with null support
+- **StringArray**: Variable-length strings with offset buffer design
+- **NullArray**: Ultra-compact storage for completely null columns
+- **Zero-copy slicing**: All arrays support efficient slicing via `Arc<[T]>`
 
 ## Example
 
