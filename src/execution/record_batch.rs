@@ -1,6 +1,7 @@
 use super::array::{Array, ArrayRef, BooleanArray, PrimitiveArray, StringArray, NullArray, PrimitiveArrayBuilder};
 use super::schema::{DataType, Schema, Field};
 use std::sync::Arc;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct RecordBatch {
@@ -397,6 +398,77 @@ impl RecordBatch {
         Self { schema, columns: cols, num_rows: 0 }
     }
 
+}
+
+impl fmt::Display for RecordBatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.num_rows == 0 {
+            return write!(f, "empty RecordBatch");
+        }
+
+        for field in self.schema.fields().iter() {
+            write!(f, "[{}]", field.name())?;
+        }
+        writeln!(f)?;
+
+        let rows_to_show = self.num_rows.min(10);
+        for row_idx in 0..rows_to_show {
+            for column in self.columns.iter() {
+                let value_str = match column.data_type() {
+                    DataType::Int64 => {
+                        if let Some(array) = column.as_any().downcast_ref::<PrimitiveArray<i64>>() {
+                            match array.value(row_idx) {
+                                Some(val) => val.to_string(),
+                                None => "null".to_string(),
+                            }
+                        } else {
+                            "?".to_string()
+                        }
+                    }
+                    DataType::Float64 => {
+                        if let Some(array) = column.as_any().downcast_ref::<PrimitiveArray<f64>>() {
+                            match array.value(row_idx) {
+                                Some(val) => val.to_string(),
+                                None => "null".to_string(),
+                            }
+                        } else {
+                            "?".to_string()
+                        }
+                    }
+                    DataType::String => {
+                        if let Some(array) = column.as_any().downcast_ref::<StringArray>() {
+                            match array.value(row_idx) {
+                                Some(val) => val.to_string(),
+                                None => "null".to_string(),
+                            }
+                        } else {
+                            "?".to_string()
+                        }
+                    }
+                    DataType::Boolean => {
+                        if let Some(array) = column.as_any().downcast_ref::<BooleanArray>() {
+                            match array.value(row_idx) {
+                                Some(val) => val.to_string(),
+                                None => "null".to_string(),
+                            }
+                        } else {
+                            "?".to_string()
+                        }
+                    }
+                    DataType::Null => "null".to_string(),
+                };
+
+                write!(f, "[{}]", value_str)?;
+            }
+            writeln!(f)?;
+        }
+
+        if self.num_rows > 10 {
+            writeln!(f, "... ({} more rows)", self.num_rows - 10)?;
+        }
+
+        Ok(())
+    }
 }
 
 pub struct RecordBatchBuilder {

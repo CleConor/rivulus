@@ -216,10 +216,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect_streaming()?;
 
     println!("Streaming Result:");
-    println!("{:?}\n", streaming_result1);
+    println!("{}\n", streaming_result1);
 
     println!("Streaming Result with alias:");
-    println!("{:?}\n", streaming_result1b);
+    println!("{}\n", streaming_result1b);
 
     // Example 2: Streaming with filter and select
     println!("Streaming Example 2: Filter + Select with streaming");
