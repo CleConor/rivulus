@@ -42,6 +42,12 @@ pub fn logical_to_physical(logical: LogicalPlan) -> Result<PhysicalPlan, Convers
     match logical {
         LogicalPlan::DataFrameSource { df, .. } => Ok(PhysicalPlan::DataFrameSource { df }),
 
+        LogicalPlan::CsvFileSource { .. } => {
+            Err(ConversionError::General {
+                message: "CSV file source not supported in non-streaming physical planner. Use streaming planner instead.".to_string(),
+            })
+        }
+
         LogicalPlan::Select { input, expressions } => {
             let physical_input = Box::new(logical_to_physical(*input)?);
 

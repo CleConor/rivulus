@@ -2,6 +2,7 @@ use crate::datatypes::dataframe::DataFrame;
 use crate::datatypes::series::DataType;
 use crate::expressions::expr::{BinaryOperator, Expr};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -9,6 +10,12 @@ pub enum LogicalPlan {
     DataFrameSource {
         df: DataFrame,
         schema: Vec<(String, DataType)>,
+    },
+    CsvFileSource {
+        path: PathBuf,
+        schema: Vec<(String, DataType)>,
+        batch_size: Option<usize>,
+        delimiter: Option<char>,
     },
     Select {
         input: Box<LogicalPlan>,
@@ -56,6 +63,7 @@ impl LogicalPlan {
     pub fn schema(&self) -> Vec<(String, DataType)> {
         match self {
             Self::DataFrameSource { schema, .. } => schema.clone(),
+            Self::CsvFileSource { schema, .. } => schema.clone(),
             Self::Select { input, expressions } => {
                 let input_schema = input.schema();
 
@@ -117,6 +125,7 @@ impl LogicalPlan {
                 }
                 Ok(())
             }
+            Self::CsvFileSource { .. } => Ok(()),
             Self::Select { input, expressions } => {
                 input.validate()?;
 
@@ -203,7 +212,7 @@ impl LogicalPlan {
                     .iter()
                     .find(|(col_name, _)| col_name == name)
                     .map(|(_, dtype)| dtype.clone())
-                    .unwrap_or(DataType::Null); // O errore
+                    .unwrap_or(DataType::Null);
                 (name.clone(), dtype)
             }
 

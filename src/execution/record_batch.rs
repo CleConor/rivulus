@@ -1,7 +1,9 @@
-use super::array::{Array, ArrayRef, BooleanArray, PrimitiveArray, StringArray, NullArray, PrimitiveArrayBuilder};
-use super::schema::{DataType, Schema, Field};
-use std::sync::Arc;
+use super::array::{
+    Array, ArrayRef, BooleanArray, NullArray, PrimitiveArray, PrimitiveArrayBuilder, StringArray,
+};
+use super::schema::{DataType, Field, Schema};
 use std::fmt;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct RecordBatch {
@@ -80,9 +82,7 @@ impl RecordBatch {
     }
 
     pub fn column_by_name(&self, name: &str) -> Option<&ArrayRef> {
-        self.schema
-            .index_of(name)
-            .map(|index| &self.columns[index])
+        self.schema.index_of(name).map(|index| &self.columns[index])
     }
 
     pub fn columns(&self) -> &[ArrayRef] {
@@ -108,7 +108,10 @@ impl RecordBatch {
     pub fn take(&self, indices: &[usize]) -> Result<Self, String> {
         for &index in indices {
             if index >= self.num_rows {
-                return Err(format!("Index {} out of bounds for {} rows", index, self.num_rows));
+                return Err(format!(
+                    "Index {} out of bounds for {} rows",
+                    index, self.num_rows
+                ));
             }
         }
 
@@ -126,11 +129,14 @@ impl RecordBatch {
     }
 
     fn take_array(&self, array: &ArrayRef, indices: &[usize]) -> Result<ArrayRef, String> {
-        use super::array::{PrimitiveArray, StringArray, BooleanArray, NullArray};
+        use super::array::{BooleanArray, NullArray, PrimitiveArray, StringArray};
 
         match array.data_type() {
             DataType::Int64 => {
-                let src = array.as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+                let src = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<i64>>()
+                    .unwrap();
                 let mut builder = PrimitiveArrayBuilder::<i64>::with_capacity(indices.len());
                 for &index in indices {
                     match src.value(index) {
@@ -141,7 +147,10 @@ impl RecordBatch {
                 Ok(Arc::new(builder.finish()))
             }
             DataType::Float64 => {
-                let src = array.as_any().downcast_ref::<PrimitiveArray<f64>>().unwrap();
+                let src = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<f64>>()
+                    .unwrap();
                 let mut builder = PrimitiveArrayBuilder::<f64>::with_capacity(indices.len());
                 for &index in indices {
                     match src.value(index) {
@@ -161,22 +170,21 @@ impl RecordBatch {
             }
             DataType::Boolean => {
                 let src = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-                let values: Vec<Option<bool>> = indices
-                    .iter()
-                    .map(|&i| src.value(i))
-                    .collect();
+                let values: Vec<Option<bool>> = indices.iter().map(|&i| src.value(i)).collect();
                 Ok(Arc::new(BooleanArray::new(values)))
             }
-            DataType::Null => {
-                Ok(Arc::new(NullArray::new(indices.len())))
-            }
+            DataType::Null => Ok(Arc::new(NullArray::new(indices.len()))),
         }
     }
 
     pub fn select_columns(&self, indices: &[usize]) -> Result<Self, String> {
         for &index in indices {
             if index >= self.num_columns() {
-                return Err(format!("Column index {} out of bounds for {} columns", index, self.num_columns()));
+                return Err(format!(
+                    "Column index {} out of bounds for {} columns",
+                    index,
+                    self.num_columns()
+                ));
             }
         }
 
@@ -185,10 +193,8 @@ impl RecordBatch {
             .map(|&i| self.schema.field(i).clone())
             .collect();
 
-        let selected_columns: Vec<ArrayRef> = indices
-            .iter()
-            .map(|&i| self.columns[i].clone())
-            .collect();
+        let selected_columns: Vec<ArrayRef> =
+            indices.iter().map(|&i| self.columns[i].clone()).collect();
 
         let new_schema = Arc::new(Schema::new(selected_fields));
 
@@ -269,7 +275,7 @@ impl RecordBatch {
     }
 
     fn concat_arrays(arrays: &[&ArrayRef]) -> Result<ArrayRef, String> {
-        use super::array::{PrimitiveArray, StringArray, BooleanArray, NullArray};
+        use super::array::{BooleanArray, NullArray, PrimitiveArray, StringArray};
 
         if arrays.is_empty() {
             return Err("Cannot concatenate empty array list".to_string());
@@ -282,7 +288,10 @@ impl RecordBatch {
             DataType::Int64 => {
                 let mut builder = PrimitiveArrayBuilder::<i64>::with_capacity(total_len);
                 for array in arrays {
-                    let primitive_array = array.as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+                    let primitive_array = array
+                        .as_any()
+                        .downcast_ref::<PrimitiveArray<i64>>()
+                        .unwrap();
                     for i in 0..primitive_array.len() {
                         match primitive_array.value(i) {
                             Some(val) => builder.append_value(val),
@@ -295,7 +304,10 @@ impl RecordBatch {
             DataType::Float64 => {
                 let mut builder = PrimitiveArrayBuilder::<f64>::with_capacity(total_len);
                 for array in arrays {
-                    let primitive_array = array.as_any().downcast_ref::<PrimitiveArray<f64>>().unwrap();
+                    let primitive_array = array
+                        .as_any()
+                        .downcast_ref::<PrimitiveArray<f64>>()
+                        .unwrap();
                     for i in 0..primitive_array.len() {
                         match primitive_array.value(i) {
                             Some(val) => builder.append_value(val),
@@ -325,9 +337,7 @@ impl RecordBatch {
                 }
                 Ok(Arc::new(BooleanArray::new(all_values)))
             }
-            DataType::Null => {
-                Ok(Arc::new(NullArray::new(total_len)))
-            }
+            DataType::Null => Ok(Arc::new(NullArray::new(total_len))),
         }
     }
 
@@ -359,9 +369,7 @@ impl RecordBatch {
             if expected_type != actual_type {
                 return Err(format!(
                     "Column {} has type {:?} but schema expects {:?}",
-                    i,
-                    actual_type,
-                    expected_type
+                    i, actual_type, expected_type
                 ));
             }
         }
@@ -375,29 +383,42 @@ impl RecordBatch {
         let array_refs_size = self.columns.len() * std::mem::size_of::<ArrayRef>();
 
         // Estimate array data sizes
-        let arrays_data_size: usize = self.columns.iter().map(|col| {
-            match col.data_type() {
-                DataType::Int64 | DataType::Float64 => col.len() * 8,
-                DataType::Boolean => (col.len() + 7) / 8, // Packed bits
-                DataType::String => col.len() * 20, // Rough estimate
-                DataType::Null => 16, // Just metadata
-            }
-        }).sum();
+        let arrays_data_size: usize = self
+            .columns
+            .iter()
+            .map(|col| {
+                match col.data_type() {
+                    DataType::Int64 | DataType::Float64 => col.len() * 8,
+                    DataType::Boolean => (col.len() + 7) / 8, // Packed bits
+                    DataType::String => col.len() * 20,       // Rough estimate
+                    DataType::Null => 16,                     // Just metadata
+                }
+            })
+            .sum();
 
         schema_size + columns_overhead + array_refs_size + arrays_data_size
     }
 
     pub fn empty(schema: Arc<Schema>) -> Self {
-        let cols = schema.fields().iter().map(|f| match f.data_type() {
-            DataType::Int64  => Arc::new(PrimitiveArray::<i64>::from_values(vec![])) as ArrayRef,
-            DataType::Float64=> Arc::new(PrimitiveArray::<f64>::from_values(vec![])) as ArrayRef,
-            DataType::String => Arc::new(StringArray::new(vec![])) as ArrayRef,
-            DataType::Boolean=> Arc::new(BooleanArray::from_bools(vec![])) as ArrayRef,
-            DataType::Null   => Arc::new(NullArray::new(0)) as ArrayRef,
-        }).collect();
-        Self { schema, columns: cols, num_rows: 0 }
+        let cols = schema
+            .fields()
+            .iter()
+            .map(|f| match f.data_type() {
+                DataType::Int64 => Arc::new(PrimitiveArray::<i64>::from_values(vec![])) as ArrayRef,
+                DataType::Float64 => {
+                    Arc::new(PrimitiveArray::<f64>::from_values(vec![])) as ArrayRef
+                }
+                DataType::String => Arc::new(StringArray::new(vec![])) as ArrayRef,
+                DataType::Boolean => Arc::new(BooleanArray::from_bools(vec![])) as ArrayRef,
+                DataType::Null => Arc::new(NullArray::new(0)) as ArrayRef,
+            })
+            .collect();
+        Self {
+            schema,
+            columns: cols,
+            num_rows: 0,
+        }
     }
-
 }
 
 impl fmt::Display for RecordBatch {
@@ -555,7 +576,7 @@ impl Default for RecordBatchBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::array::{PrimitiveArray, StringArray, BooleanArray, NullArray};
+    use crate::execution::array::{BooleanArray, NullArray, PrimitiveArray, StringArray};
     use crate::execution::schema::{Field, Schema};
 
     fn to_array_ref<T: Array + 'static>(array: T) -> ArrayRef {
@@ -688,7 +709,11 @@ mod tests {
         assert_eq!(sliced.schema().as_ref(), schema.as_ref());
 
         // Verify slicing preserved data
-        let id_col = sliced.column(0).as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+        let id_col = sliced
+            .column(0)
+            .as_any()
+            .downcast_ref::<PrimitiveArray<i64>>()
+            .unwrap();
         assert_eq!(id_col.value(0), Some(2));
         assert_eq!(id_col.value(1), Some(3));
     }
@@ -734,7 +759,11 @@ mod tests {
         assert_eq!(taken.num_rows(), 3);
         assert_eq!(taken.num_columns(), 3);
 
-        let id_col = taken.column(0).as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+        let id_col = taken
+            .column(0)
+            .as_any()
+            .downcast_ref::<PrimitiveArray<i64>>()
+            .unwrap();
         assert_eq!(id_col.value(0), Some(3)); // Index 2
         assert_eq!(id_col.value(1), Some(1)); // Index 0
         assert_eq!(id_col.value(2), Some(2)); // Index 1
@@ -801,7 +830,11 @@ mod tests {
         assert_eq!(filtered.num_rows(), 2);
         assert_eq!(filtered.num_columns(), 3);
 
-        let id_col = filtered.column(0).as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+        let id_col = filtered
+            .column(0)
+            .as_any()
+            .downcast_ref::<PrimitiveArray<i64>>()
+            .unwrap();
         assert_eq!(id_col.value(0), Some(1));
         assert_eq!(id_col.value(1), Some(3));
     }
@@ -855,24 +888,33 @@ mod tests {
                 to_array_ref(PrimitiveArray::<i64>::from_values(vec![1, 2])),
                 to_array_ref(StringArray::new(vec![Some("A".to_string()), None])),
                 to_array_ref(BooleanArray::from_bools(vec![true, false])),
-            ]
-        ).unwrap();
+            ],
+        )
+        .unwrap();
 
         let batch2 = RecordBatch::try_new(
             schema.clone(),
             vec![
                 to_array_ref(PrimitiveArray::<i64>::from_values(vec![3, 4])),
-                to_array_ref(StringArray::new(vec![Some("B".to_string()), Some("C".to_string())])),
+                to_array_ref(StringArray::new(vec![
+                    Some("B".to_string()),
+                    Some("C".to_string()),
+                ])),
                 to_array_ref(BooleanArray::from_bools(vec![true, true])),
-            ]
-        ).unwrap();
+            ],
+        )
+        .unwrap();
 
         let concatenated = RecordBatch::concat(&[batch1, batch2]).unwrap();
 
         assert_eq!(concatenated.num_rows(), 4);
         assert_eq!(concatenated.num_columns(), 3);
 
-        let id_col = concatenated.column(0).as_any().downcast_ref::<PrimitiveArray<i64>>().unwrap();
+        let id_col = concatenated
+            .column(0)
+            .as_any()
+            .downcast_ref::<PrimitiveArray<i64>>()
+            .unwrap();
         assert_eq!(id_col.value(0), Some(1));
         assert_eq!(id_col.value(1), Some(2));
         assert_eq!(id_col.value(2), Some(3));
@@ -893,7 +935,11 @@ mod tests {
     #[test]
     fn test_concat_schema_mismatch() {
         let schema1 = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
-        let schema2 = Arc::new(Schema::new(vec![Field::new("name", DataType::String, false)]));
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "name",
+            DataType::String,
+            false,
+        )]));
 
         let batch1 = RecordBatch::empty(schema1);
         let batch2 = RecordBatch::empty(schema2);
@@ -942,9 +988,21 @@ mod tests {
         assert_eq!(builder.num_columns(), 0);
         assert!(!builder.is_complete());
 
-        builder.add_column(Arc::new(PrimitiveArray::<i64>::from_values(vec![1, 2, 3]))).unwrap();
-        builder.add_column(to_array_ref(StringArray::new(vec![Some("Alice".to_string()), None, Some("Charlie".to_string())]))).unwrap();
-        builder.add_column(to_array_ref(BooleanArray::from_bools(vec![true, false, true]))).unwrap();
+        builder
+            .add_column(Arc::new(PrimitiveArray::<i64>::from_values(vec![1, 2, 3])))
+            .unwrap();
+        builder
+            .add_column(to_array_ref(StringArray::new(vec![
+                Some("Alice".to_string()),
+                None,
+                Some("Charlie".to_string()),
+            ])))
+            .unwrap();
+        builder
+            .add_column(to_array_ref(BooleanArray::from_bools(vec![
+                true, false, true,
+            ])))
+            .unwrap();
 
         assert_eq!(builder.num_columns(), 3);
         assert!(builder.is_complete());
@@ -978,7 +1036,9 @@ mod tests {
         let schema = create_test_schema();
         let mut builder = RecordBatchBuilder::new(schema);
 
-        builder.add_column(Arc::new(PrimitiveArray::<i64>::from_values(vec![1, 2, 3]))).unwrap();
+        builder
+            .add_column(Arc::new(PrimitiveArray::<i64>::from_values(vec![1, 2, 3])))
+            .unwrap();
         // Only added 1 of 3 expected columns
 
         let result = builder.finish();
@@ -998,7 +1058,11 @@ mod tests {
         let columns = vec![
             to_array_ref(PrimitiveArray::<i64>::from_values(vec![1, 2, 3])),
             to_array_ref(PrimitiveArray::<f64>::from_values(vec![1.1, 2.2, 3.3])),
-            to_array_ref(StringArray::new(vec![Some("A".to_string()), None, Some("C".to_string())])),
+            to_array_ref(StringArray::new(vec![
+                Some("A".to_string()),
+                None,
+                Some("C".to_string()),
+            ])),
             to_array_ref(BooleanArray::from_bools(vec![true, false, true])),
             to_array_ref(NullArray::new(3)),
         ];
@@ -1018,7 +1082,9 @@ mod tests {
 
         let columns = vec![
             to_array_ref(PrimitiveArray::<i64>::from_values((0..size).collect())),
-            to_array_ref(PrimitiveArray::<f64>::from_values((0..size).map(|i| i as f64 * 1.5).collect())),
+            to_array_ref(PrimitiveArray::<f64>::from_values(
+                (0..size).map(|i| i as f64 * 1.5).collect(),
+            )),
         ];
 
         let start = std::time::Instant::now();

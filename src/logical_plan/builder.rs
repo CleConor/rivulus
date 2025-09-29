@@ -1,9 +1,11 @@
 use crate::datatypes::dataframe::DataFrame;
+use crate::datatypes::series::DataType;
 use crate::execution::RecordBatch;
 use crate::expressions::expr::Expr;
 use crate::logical_plan::QueryOptimizer;
 use crate::logical_plan::plan::{JoinType, LogicalPlan, LogicalPlanError};
-use crate::physical_plan::{logical_to_physical, logical_to_streaming, StreamingPlannerError};
+use crate::physical_plan::{StreamingPlannerError, logical_to_physical, logical_to_streaming};
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,22 @@ impl LazyFrame {
                     .map(|s| s.name().to_string())
                     .zip(df.columns().iter().map(|s| s.dtype().clone()))
                     .collect(),
+            },
+        }
+    }
+
+    pub fn from_csv<P: Into<PathBuf>>(
+        path: P,
+        schema: Vec<(String, DataType)>,
+        batch_size: Option<usize>,
+        delimiter: Option<char>,
+    ) -> Self {
+        Self {
+            logical_plan: LogicalPlan::CsvFileSource {
+                path: path.into(),
+                schema,
+                batch_size,
+                delimiter,
             },
         }
     }
@@ -566,7 +584,7 @@ mod tests {
     fn test_collect_streaming_with_filter() {
         let df = create_test_dataframe();
         let result = LazyFrame::from_dataframe(df)
-            .filter(Expr::col("active"))  // Simple boolean column filter
+            .filter(Expr::col("active")) // Simple boolean column filter
             .collect_streaming();
 
         // This should fail because we need to create a DataFrame with a boolean column

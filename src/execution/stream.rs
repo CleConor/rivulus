@@ -49,8 +49,7 @@ pub trait DataStream: Send + Sync + std::fmt::Debug {
             return Ok(RecordBatch::empty(schema));
         }
 
-        RecordBatch::concat(&batches)
-            .map_err(|e| StreamError::Execution { message: e })
+        RecordBatch::concat(&batches).map_err(|e| StreamError::Execution { message: e })
     }
 }
 
@@ -65,7 +64,6 @@ pub struct MemoryStream {
 
 impl MemoryStream {
     pub fn new(schema: Arc<Schema>, batches: Vec<RecordBatch>) -> Result<Self> {
-
         for batch in &batches {
             if batch.schema().as_ref() != schema.as_ref() {
                 return Err(StreamError::SchemaMismatch {
@@ -86,7 +84,7 @@ impl MemoryStream {
         Self {
             schema: batch.schema().clone(),
             batches: vec![batch],
-            current_index: 0
+            current_index: 0,
         }
     }
 
@@ -123,7 +121,10 @@ pub struct FilterStream {
 
 impl FilterStream {
     pub fn new(input: DataStreamRef, predicate_column: String) -> Self {
-        Self { input, predicate_column }
+        Self {
+            input,
+            predicate_column,
+        }
     }
 }
 
@@ -135,16 +136,20 @@ impl DataStream for FilterStream {
     fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
         if let Some(batch) = self.input.next_batch()? {
             let schema = batch.schema();
-            let col_index = schema.index_of(&self.predicate_column).ok_or_else(|| {
-                StreamError::Execution {
-                    message: format!("Column '{}' not found in schema", self.predicate_column),
-                }
-            })?;
+            let col_index =
+                schema
+                    .index_of(&self.predicate_column)
+                    .ok_or_else(|| StreamError::Execution {
+                        message: format!("Column '{}' not found in schema", self.predicate_column),
+                    })?;
 
             let predicate_array = batch.column(col_index);
             if predicate_array.data_type() != &super::schema::DataType::Boolean {
                 return Err(StreamError::Execution {
-                    message: format!("Predicate column '{}' is not of boolean type", self.predicate_column),
+                    message: format!(
+                        "Predicate column '{}' is not of boolean type",
+                        self.predicate_column
+                    ),
                 });
             }
 
@@ -170,11 +175,12 @@ impl SelectStream {
         let mut fields = Vec::new();
 
         for col_name in &column_names {
-            let field = input_schema.field_by_name(col_name).ok_or_else(|| {
-                StreamError::Execution {
-                    message: format!("Column '{}' not found in schema", col_name),
-                }
-            })?;
+            let field =
+                input_schema
+                    .field_by_name(col_name)
+                    .ok_or_else(|| StreamError::Execution {
+                        message: format!("Column '{}' not found in schema", col_name),
+                    })?;
             fields.push(field.clone());
         }
 
@@ -195,7 +201,8 @@ impl DataStream for SelectStream {
 
     fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
         if let Some(batch) = self.input.next_batch()? {
-            let column_names_str: Vec<&str> = self.column_names.iter().map(|s| s.as_str()).collect();
+            let column_names_str: Vec<&str> =
+                self.column_names.iter().map(|s| s.as_str()).collect();
             let selected_batch = RecordBatch::select_columns_by_name(&batch, &column_names_str)
                 .map_err(|e| StreamError::Execution { message: e })?;
             Ok(Some(selected_batch))
@@ -209,10 +216,12 @@ impl DataStream for SelectStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::array::{PrimitiveArray, StringArray, BooleanArray};
+    use crate::execution::array::{BooleanArray, PrimitiveArray, StringArray};
     use crate::execution::schema::{DataType, Field};
 
-    fn to_array_ref<T: crate::execution::array::Array + 'static>(array: T) -> crate::execution::array::ArrayRef {
+    fn to_array_ref<T: crate::execution::array::Array + 'static>(
+        array: T,
+    ) -> crate::execution::array::ArrayRef {
         Arc::new(array)
     }
 
@@ -227,7 +236,10 @@ mod tests {
     fn create_test_batch(id_start: i64) -> RecordBatch {
         let schema = create_test_schema();
         let columns = vec![
-            to_array_ref(PrimitiveArray::<i64>::from_values(vec![id_start, id_start + 1])),
+            to_array_ref(PrimitiveArray::<i64>::from_values(vec![
+                id_start,
+                id_start + 1,
+            ])),
             to_array_ref(StringArray::new(vec![
                 Some(format!("name_{}", id_start)),
                 Some(format!("name_{}", id_start + 1)),
@@ -250,19 +262,19 @@ mod tests {
 
     #[test]
     fn test_memory_stream_schema_mismatch() {
-        let schema1 = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
-        let schema2 = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::String, false),
-        ]));
+        let schema1 = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "name",
+            DataType::String,
+            false,
+        )]));
 
         let batch = RecordBatch::empty(schema2);
         let result = MemoryStream::new(schema1, vec![batch]);
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            StreamError::SchemaMismatch { .. } => {},
+            StreamError::SchemaMismatch { .. } => {}
             _ => panic!("Expected SchemaMismatch error"),
         }
     }
@@ -380,7 +392,10 @@ mod tests {
         let schema = create_test_schema();
         let columns = vec![
             to_array_ref(PrimitiveArray::<i64>::from_values(vec![1, 2])),
-            to_array_ref(StringArray::new(vec![Some("a".to_string()), Some("b".to_string())])),
+            to_array_ref(StringArray::new(vec![
+                Some("a".to_string()),
+                Some("b".to_string()),
+            ])),
             to_array_ref(BooleanArray::from_bools(vec![false, false])),
         ];
         let batch = RecordBatch::try_new(schema, columns).unwrap();
@@ -448,7 +463,8 @@ mod tests {
     fn test_select_stream_reorder_columns() {
         let batch = create_test_batch(1);
         let input = Box::new(MemoryStream::from_single_batch(batch));
-        let mut select = SelectStream::new(input, vec!["active".to_string(), "id".to_string()]).unwrap();
+        let mut select =
+            SelectStream::new(input, vec!["active".to_string(), "id".to_string()]).unwrap();
 
         let result = select.next_batch().unwrap();
         assert!(result.is_some());
@@ -469,7 +485,7 @@ mod tests {
         match result.unwrap_err() {
             StreamError::Execution { message } => {
                 assert!(message.contains("nonexistent"));
-            },
+            }
             _ => panic!("Expected Execution error"),
         }
     }
@@ -522,7 +538,8 @@ mod tests {
         let batch2 = create_test_batch(3);
 
         // Test collect
-        let stream1 = MemoryStream::new(schema.clone(), vec![batch1.clone(), batch2.clone()]).unwrap();
+        let stream1 =
+            MemoryStream::new(schema.clone(), vec![batch1.clone(), batch2.clone()]).unwrap();
         let collected = stream1.collect().unwrap();
         assert_eq!(collected.len(), 2);
 

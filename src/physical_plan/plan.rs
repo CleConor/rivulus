@@ -65,7 +65,11 @@ impl PhysicalPlan {
     pub fn execute(self) -> Result<DataFrame, ExecutionError> {
         match self {
             Self::DataFrameSource { df } => Ok(df),
-            Self::Select { input, columns, final_names } => {
+            Self::Select {
+                input,
+                columns,
+                final_names,
+            } => {
                 let input_df = input.execute()?;
 
                 for col_name in &columns {
@@ -82,8 +86,9 @@ impl PhysicalPlan {
 
                 let mut renamed_columns = Vec::new();
                 for (series, final_name) in selected_df.columns().iter().zip(final_names.iter()) {
-                    let renamed_series = Series::new(final_name, series.iter().cloned().collect::<Vec<_>>())
-                        .map_err(ExecutionError::from)?;
+                    let renamed_series =
+                        Series::new(final_name, series.iter().cloned().collect::<Vec<_>>())
+                            .map_err(ExecutionError::from)?;
                     renamed_columns.push(renamed_series);
                 }
 

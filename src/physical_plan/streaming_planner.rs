@@ -1,8 +1,10 @@
-use crate::logical_plan::plan::LogicalPlan;
+use crate::execution::{DataType as ExecutionDataType, Field, Schema};
+use crate::expressions::expr::Expr;
 #[allow(unused_imports)]
 use crate::logical_plan::plan::JoinType;
-use crate::physical_plan::streaming::{StreamingPhysicalPlan, StreamingExecutionError};
-use crate::expressions::expr::Expr;
+use crate::logical_plan::plan::LogicalPlan;
+use crate::physical_plan::streaming::{StreamingExecutionError, StreamingPhysicalPlan};
+use std::sync::Arc;
 
 pub type Result<T> = std::result::Result<T, StreamingPlannerError>;
 
@@ -24,14 +26,40 @@ pub enum StreamingPlannerError {
     StreamingExecution(#[from] StreamingExecutionError),
 }
 
-
 pub fn logical_to_streaming(plan: LogicalPlan) -> Result<StreamingPhysicalPlan> {
     match plan {
         LogicalPlan::DataFrameSource { df, .. } => {
-            
             Ok(StreamingPhysicalPlan::dataframe_source(df, 1024))
         }
 
+        LogicalPlan::CsvFileSource {
+            path,
+            schema,
+            batch_size,
+            delimiter,
+        } => {
+            let execution_fields: Vec<Field> = schema
+                .iter()
+                .map(|(name, dtype)| {
+                    let execution_dtype = match dtype {
+                        crate::datatypes::series::DataType::Int64 => ExecutionDataType::Int64,
+                        crate::datatypes::series::DataType::Float64 => ExecutionDataType::Float64,
+                        crate::datatypes::series::DataType::String => ExecutionDataType::String,
+                        crate::datatypes::series::DataType::Boolean => ExecutionDataType::Boolean,
+                        crate::datatypes::series::DataType::Null => ExecutionDataType::Null,
+                    };
+                    Field::new(name, execution_dtype, true)
+                })
+                .collect();
+
+            let execution_schema = Arc::new(Schema::new(execution_fields));
+            Ok(StreamingPhysicalPlan::csv_file_source(
+                path,
+                execution_schema,
+                batch_size,
+                delimiter,
+            ))
+        }
 
         LogicalPlan::Select { input, expressions } => {
             let streaming_input = logical_to_streaming(*input)?;
@@ -55,7 +83,7 @@ pub fn logical_to_streaming(plan: LogicalPlan) -> Result<StreamingPhysicalPlan> 
             right,
             left_key,
             right_key,
-            join_type
+            join_type,
         } => {
             let streaming_left = logical_to_streaming(*left)?;
             let streaming_right = logical_to_streaming(*right)?;
@@ -71,8 +99,6 @@ pub fn logical_to_streaming(plan: LogicalPlan) -> Result<StreamingPhysicalPlan> 
     }
 }
 
-// Extract column names from select expressions
-// For now, only supports simple column references
 fn extract_column_names_from_expressions(expressions: &[Expr]) -> Result<Vec<String>> {
     let mut column_names = Vec::new();
 
@@ -81,22 +107,25 @@ fn extract_column_names_from_expressions(expressions: &[Expr]) -> Result<Vec<Str
             Expr::Column(name) => {
                 column_names.push(name.clone());
             }
-            Expr::Alias(inner_expr, _alias_name) => {
-                // For aliases, we use the original column name for data extraction
-                match inner_expr.as_ref() {
-                    Expr::Column(original_name) => {
-                        column_names.push(original_name.clone());
-                    }
-                    _ => {
-                        return Err(StreamingPlannerError::ExpressionError {
-                            message: format!("Complex expressions with aliases not yet supported: {:?}", expr),
-                        });
-                    }
+            Expr::Alias(inner_expr, _alias_name) => match inner_expr.as_ref() {
+                Expr::Column(original_name) => {
+                    column_names.push(original_name.clone());
                 }
-            }
+                _ => {
+                    return Err(StreamingPlannerError::ExpressionError {
+                        message: format!(
+                            "Complex expressions with aliases not yet supported: {:?}",
+                            expr
+                        ),
+                    });
+                }
+            },
             _ => {
                 return Err(StreamingPlannerError::ExpressionError {
-                    message: format!("Complex expressions not yet supported in streaming mode: {:?}", expr),
+                    message: format!(
+                        "Complex expressions not yet supported in streaming mode: {:?}",
+                        expr
+                    ),
                 });
             }
         }
@@ -105,41 +134,36 @@ fn extract_column_names_from_expressions(expressions: &[Expr]) -> Result<Vec<Str
     Ok(column_names)
 }
 
-// Extract boolean predicate column from filter expression
-// For now, only supports simple boolean column predicates
 fn extract_boolean_predicate_column(predicate: &Expr) -> Result<String> {
     match predicate {
-        // Simple boolean column reference (e.g., "active")
         Expr::Column(name) => Ok(name.clone()),
 
-        // Binary expression that should evaluate to boolean
-        Expr::BinaryExpr { left, op: _, right: _ } => {
-            // For now, we need the predicate to be a simple boolean column
-            // In a full implementation, we'd evaluate the binary expression and create a boolean array
-            match left.as_ref() {
-                Expr::Column(name) => {
-                    return Err(StreamingPlannerError::ExpressionError {
-                        message: format!(
-                            "Binary expressions not yet supported in streaming mode. \
+        Expr::BinaryExpr {
+            left,
+            op: _,
+            right: _,
+        } => match left.as_ref() {
+            Expr::Column(name) => {
+                return Err(StreamingPlannerError::ExpressionError {
+                    message: format!(
+                        "Binary expressions not yet supported in streaming mode. \
                             Found expression on column '{}'. \
                             Currently only simple boolean column references are supported (e.g., .filter(col('is_active')))",
-                            name
-                        ),
-                    });
-                }
-                _ => {
-                    return Err(StreamingPlannerError::ExpressionError {
-                        message: "Complex binary expressions not supported in streaming mode".to_string(),
-                    });
-                }
+                        name
+                    ),
+                });
             }
-        }
+            _ => {
+                return Err(StreamingPlannerError::ExpressionError {
+                    message: "Complex binary expressions not supported in streaming mode"
+                        .to_string(),
+                });
+            }
+        },
 
-        _ => {
-            Err(StreamingPlannerError::ExpressionError {
-                message: format!("Unsupported filter expression type: {:?}", predicate),
-            })
-        }
+        _ => Err(StreamingPlannerError::ExpressionError {
+            message: format!("Unsupported filter expression type: {:?}", predicate),
+        }),
     }
 }
 
@@ -147,7 +171,7 @@ fn extract_boolean_predicate_column(predicate: &Expr) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datatypes::{DataFrame, Series, AnyValue, DataType};
+    use crate::datatypes::{AnyValue, DataFrame, DataType, Series};
     use crate::expressions::expr::Expr;
 
     fn create_test_dataframe() -> DataFrame {
@@ -158,7 +182,8 @@ mod tests {
                 AnyValue::String("Bob".to_string()),
                 AnyValue::String("Charlie".to_string()),
             ],
-        ).unwrap();
+        )
+        .unwrap();
 
         let ages = Series::new(
             "age",
@@ -167,7 +192,8 @@ mod tests {
                 AnyValue::Int64(30),
                 AnyValue::Int64(35),
             ],
-        ).unwrap();
+        )
+        .unwrap();
 
         let active = Series::new(
             "active",
@@ -176,7 +202,8 @@ mod tests {
                 AnyValue::Boolean(false),
                 AnyValue::Boolean(true),
             ],
-        ).unwrap();
+        )
+        .unwrap();
 
         DataFrame::new(vec![names, ages, active]).unwrap()
     }
@@ -301,7 +328,6 @@ mod tests {
         assert_eq!(result.schema().field(0).name(), "name");
     }
 
-
     #[test]
     fn test_complex_expression_not_supported() {
         let df = create_test_dataframe();
@@ -310,13 +336,11 @@ mod tests {
                 df,
                 schema: vec![("age".to_string(), DataType::Int64)],
             }),
-            expressions: vec![
-                Expr::BinaryExpr {
-                    left: Box::new(Expr::Column("age".to_string())),
-                    op: crate::expressions::expr::BinaryOperator::Plus,
-                    right: Box::new(Expr::Literal(AnyValue::Int64(10))),
-                },
-            ],
+            expressions: vec![Expr::BinaryExpr {
+                left: Box::new(Expr::Column("age".to_string())),
+                op: crate::expressions::expr::BinaryOperator::Plus,
+                right: Box::new(Expr::Literal(AnyValue::Int64(10))),
+            }],
         };
 
         let result = logical_to_streaming(logical_plan);

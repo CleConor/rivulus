@@ -1,4 +1,4 @@
-use rivulus::datatypes::{AnyValue, DataFrame, Series};
+use rivulus::datatypes::{AnyValue, DataFrame, DataType, Series};
 use rivulus::expressions::Expr;
 use rivulus::logical_plan::LazyFrame;
 
@@ -221,15 +221,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Streaming Result with alias:");
     println!("{}\n", streaming_result1b);
 
-    // Example 2: Streaming with filter and select
-    println!("Streaming Example 2: Filter + Select with streaming");
+    // Example 2: Streaming with simple select (skip filter for now since binary expressions not supported)
+    println!("Streaming Example 2: Simple Select with streaming");
     let streaming_result2 = LazyFrame::from_dataframe(orders_df.clone())
-        .filter(Expr::col("amount").gt(Expr::lit(20.0)))
         .select(vec![Expr::col("order_id"), Expr::col("amount")])
         .collect_streaming()?;
 
     println!("Streaming Result:");
     println!("{:?}\n", streaming_result2);
+
+    // Example 3: CSV File Streaming with LazyFrame pattern
+    println!("Streaming Example 3: CSV File with LazyFrame pattern");
+
+    // Create schema for username.csv (Username; Identifier;First name;Last name)
+    // In the future schema could be inferred from the file
+    let csv_schema = vec![
+        ("Username".to_string(), DataType::String),
+        ("Identifier".to_string(), DataType::Int64),
+        ("First_name".to_string(), DataType::String),
+        ("Last_name".to_string(), DataType::String),
+    ];
+
+    // Use LazyFrame.from_csv() with select and collect_streaming
+    let csv_result = LazyFrame::from_csv("username.csv", csv_schema, Some(1000), Some(';'))
+        .select(vec![
+            Expr::col("Username"),
+            Expr::col("First_name"),
+            Expr::col("Last_name"),
+        ])
+        .limit(3)
+        .collect_streaming()?;
+
+    println!("CSV Streaming Result:");
+    println!("{}\n", csv_result);
 
     println!("=== Demo completed successfully! ===");
 

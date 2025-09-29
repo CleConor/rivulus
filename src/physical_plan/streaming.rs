@@ -1,7 +1,8 @@
-use crate::execution::{DataStream, DataStreamRef, RecordBatch, Schema};
-use crate::execution::stream::{MemoryStream, FilterStream, SelectStream, StreamError};
 use crate::datatypes::DataFrame;
+use crate::execution::stream::{FilterStream, MemoryStream, SelectStream, StreamError};
+use crate::execution::{CsvFileStream, DataStream, DataStreamRef, RecordBatch, Schema};
 use crate::logical_plan::JoinType;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub type Result<T> = std::result::Result<T, StreamingExecutionError>;
@@ -24,34 +25,39 @@ pub enum StreamingExecutionError {
     InvalidOperation { message: String },
 }
 
-
 #[derive(Debug)]
 pub enum StreamingPhysicalPlan {
-    
     MemorySource {
         batches: Vec<RecordBatch>,
     },
-    
+
     DataFrameSource {
         df: DataFrame,
         batch_size: usize,
     },
-    
+
+    CsvFileSource {
+        path: PathBuf,
+        schema: Arc<Schema>,
+        batch_size: Option<usize>,
+        delimiter: Option<char>,
+    },
+
     Filter {
         input: Box<StreamingPhysicalPlan>,
         predicate_column: String,
     },
-    
+
     Select {
         input: Box<StreamingPhysicalPlan>,
         columns: Vec<String>,
     },
-    
+
     Limit {
         input: Box<StreamingPhysicalPlan>,
         n: usize,
     },
-    
+
     HashJoin {
         build_side: Box<StreamingPhysicalPlan>,
         probe_side: Box<StreamingPhysicalPlan>,
@@ -62,7 +68,6 @@ pub enum StreamingPhysicalPlan {
 }
 
 impl StreamingPhysicalPlan {
-    
     pub fn execute(self) -> Result<DataStreamRef> {
         match self {
             Self::MemorySource { batches } => {
@@ -78,10 +83,8 @@ impl StreamingPhysicalPlan {
             }
 
             Self::DataFrameSource { df, batch_size } => {
-                
                 let batches = Self::dataframe_to_batches(df, batch_size)?;
                 let schema = if batches.is_empty() {
-                    
                     Arc::new(Schema::empty())
                 } else {
                     batches[0].schema().clone()
@@ -90,7 +93,21 @@ impl StreamingPhysicalPlan {
                 Ok(Box::new(stream))
             }
 
-            Self::Filter { input, predicate_column } => {
+            Self::CsvFileSource {
+                path,
+                schema,
+                batch_size,
+                delimiter,
+            } => {
+                let file_stream = CsvFileStream::new(path, schema, batch_size, delimiter)
+                    .map_err(|e| StreamingExecutionError::InvalidOperation { message: e })?;
+                Ok(Box::new(file_stream))
+            }
+
+            Self::Filter {
+                input,
+                predicate_column,
+            } => {
                 let input_stream = input.execute()?;
                 let filter_stream = FilterStream::new(input_stream, predicate_column);
                 Ok(Box::new(filter_stream))
@@ -115,22 +132,21 @@ impl StreamingPhysicalPlan {
         }
     }
 
-    
     fn dataframe_to_batches(df: DataFrame, batch_size: usize) -> Result<Vec<RecordBatch>> {
-        use crate::execution::array::{PrimitiveArray, StringArray, BooleanArray, NullArray};
-        use crate::execution::schema::{Schema, Field, DataType as ExecutionDataType};
         use crate::execution::array::ArrayRef;
+        use crate::execution::array::{BooleanArray, NullArray, PrimitiveArray, StringArray};
+        use crate::execution::schema::{DataType as ExecutionDataType, Field, Schema};
 
         if df.is_empty() {
             return Ok(Vec::new());
         }
 
         let num_rows = df.height();
-        let num_batches = (num_rows + batch_size - 1) / batch_size; 
+        let num_batches = (num_rows + batch_size - 1) / batch_size;
         let mut batches = Vec::with_capacity(num_batches);
 
-        
-        let fields: Vec<_> = df.columns()
+        let fields: Vec<_> = df
+            .columns()
             .iter()
             .map(|series| {
                 let execution_dtype = match series.dtype() {
@@ -140,12 +156,11 @@ impl StreamingPhysicalPlan {
                     crate::datatypes::series::DataType::Boolean => ExecutionDataType::Boolean,
                     crate::datatypes::series::DataType::Null => ExecutionDataType::Null,
                 };
-                Field::new(series.name(), execution_dtype, true) 
+                Field::new(series.name(), execution_dtype, true)
             })
             .collect();
         let schema = Arc::new(Schema::new(fields));
 
-        
         for batch_idx in 0..num_batches {
             let start_row = batch_idx * batch_size;
             let end_row = ((batch_idx + 1) * batch_size).min(num_rows);
@@ -153,14 +168,13 @@ impl StreamingPhysicalPlan {
 
             let mut arrays = Vec::with_capacity(df.width());
 
-            
             for series in df.columns() {
                 let array: ArrayRef = match series.dtype() {
                     crate::datatypes::series::DataType::Int64 => {
                         let values: Vec<i64> = (start_row..end_row)
                             .map(|i| match &series[i] {
                                 crate::datatypes::series::AnyValue::Int64(val) => *val,
-                                crate::datatypes::series::AnyValue::Null => 0, 
+                                crate::datatypes::series::AnyValue::Null => 0,
                                 _ => panic!("Type mismatch in Int64 series"),
                             })
                             .collect();
@@ -171,7 +185,7 @@ impl StreamingPhysicalPlan {
                         let values: Vec<f64> = (start_row..end_row)
                             .map(|i| match &series[i] {
                                 crate::datatypes::series::AnyValue::Float64(val) => *val,
-                                crate::datatypes::series::AnyValue::Null => 0.0, 
+                                crate::datatypes::series::AnyValue::Null => 0.0,
                                 _ => panic!("Type mismatch in Float64 series"),
                             })
                             .collect();
@@ -181,7 +195,9 @@ impl StreamingPhysicalPlan {
                     crate::datatypes::series::DataType::String => {
                         let values: Vec<Option<String>> = (start_row..end_row)
                             .map(|i| match &series[i] {
-                                crate::datatypes::series::AnyValue::String(val) => Some(val.clone()),
+                                crate::datatypes::series::AnyValue::String(val) => {
+                                    Some(val.clone())
+                                }
                                 crate::datatypes::series::AnyValue::Null => None,
                                 _ => panic!("Type mismatch in String series"),
                             })
@@ -193,7 +209,7 @@ impl StreamingPhysicalPlan {
                         let values: Vec<bool> = (start_row..end_row)
                             .map(|i| match &series[i] {
                                 crate::datatypes::series::AnyValue::Boolean(val) => *val,
-                                crate::datatypes::series::AnyValue::Null => false, 
+                                crate::datatypes::series::AnyValue::Null => false,
                                 _ => panic!("Type mismatch in Boolean series"),
                             })
                             .collect();
@@ -216,19 +232,16 @@ impl StreamingPhysicalPlan {
         Ok(batches)
     }
 
-    
     pub fn collect(self) -> Result<RecordBatch> {
         let mut stream = self.execute()?;
         collect_stream_batches(&mut *stream)
     }
 
-    
     pub fn collect_batches(self) -> Result<Vec<RecordBatch>> {
         let mut stream = self.execute()?;
         collect_all_batches(&mut *stream)
     }
 }
-
 
 #[derive(Debug)]
 pub struct LimitStream {
@@ -261,11 +274,9 @@ impl DataStream for LimitStream {
             let remaining = self.limit - self.rows_returned;
 
             if batch.num_rows() <= remaining {
-                
                 self.rows_returned += batch.num_rows();
                 Ok(Some(batch))
             } else {
-                
                 let limited_batch = batch.slice(0, remaining);
                 self.rows_returned += remaining;
                 Ok(Some(limited_batch))
@@ -276,7 +287,6 @@ impl DataStream for LimitStream {
     }
 }
 
-
 impl StreamingPhysicalPlan {
     pub fn memory_source(batches: Vec<RecordBatch>) -> Self {
         Self::MemorySource { batches }
@@ -284,6 +294,20 @@ impl StreamingPhysicalPlan {
 
     pub fn dataframe_source(df: DataFrame, batch_size: usize) -> Self {
         Self::DataFrameSource { df, batch_size }
+    }
+
+    pub fn csv_file_source<P: Into<PathBuf>>(
+        path: P,
+        schema: Arc<Schema>,
+        batch_size: Option<usize>,
+        delimiter: Option<char>,
+    ) -> Self {
+        Self::CsvFileSource {
+            path: path.into(),
+            schema,
+            batch_size,
+            delimiter,
+        }
     }
 
     pub fn filter(self, predicate_column: String) -> Self {
@@ -308,7 +332,6 @@ impl StreamingPhysicalPlan {
     }
 }
 
-
 fn collect_all_batches(stream: &mut dyn DataStream) -> Result<Vec<RecordBatch>> {
     let mut batches = Vec::new();
     while let Some(batch) = stream.next_batch()? {
@@ -325,15 +348,14 @@ fn collect_stream_batches(stream: &mut dyn DataStream) -> Result<RecordBatch> {
         return Ok(RecordBatch::empty(schema));
     }
 
-    RecordBatch::concat(&batches)
-        .map_err(|e| StreamingExecutionError::Conversion { message: e })
+    RecordBatch::concat(&batches).map_err(|e| StreamingExecutionError::Conversion { message: e })
 }
 
 //generated tests
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::array::{PrimitiveArray, StringArray, BooleanArray};
+    use crate::execution::array::{BooleanArray, PrimitiveArray, StringArray};
     use crate::execution::schema::{DataType, Field};
 
     fn to_array_ref<T: crate::execution::array::Array + 'static>(
@@ -353,7 +375,10 @@ mod tests {
     fn create_test_batch(id_start: i64) -> RecordBatch {
         let schema = create_test_schema();
         let columns = vec![
-            to_array_ref(PrimitiveArray::<i64>::from_values(vec![id_start, id_start + 1])),
+            to_array_ref(PrimitiveArray::<i64>::from_values(vec![
+                id_start,
+                id_start + 1,
+            ])),
             to_array_ref(StringArray::new(vec![
                 Some(format!("name_{}", id_start)),
                 Some(format!("name_{}", id_start + 1)),
@@ -380,8 +405,8 @@ mod tests {
         let batch1 = create_test_batch(1);
         let batch2 = create_test_batch(3);
 
-        let plan = StreamingPhysicalPlan::memory_source(vec![batch1, batch2])
-            .filter("active".to_string());
+        let plan =
+            StreamingPhysicalPlan::memory_source(vec![batch1, batch2]).filter("active".to_string());
 
         let result = plan.collect().unwrap();
 
@@ -411,8 +436,7 @@ mod tests {
         let batch1 = create_test_batch(1);
         let batch2 = create_test_batch(3);
 
-        let plan = StreamingPhysicalPlan::memory_source(vec![batch1, batch2])
-            .limit(3);
+        let plan = StreamingPhysicalPlan::memory_source(vec![batch1, batch2]).limit(3);
 
         let result = plan.collect().unwrap();
 
