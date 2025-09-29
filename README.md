@@ -11,7 +11,7 @@ Currently implements basic query operations (select, filter, limit) with both tr
 - ✅ **Streaming execution system** with lazy evaluation and early termination
 - ✅ **Memory-efficient array implementations** (BitMap-backed BooleanArray, NullArray, zero-copy slicing)
 - ✅ **RecordBatch-based processing** with Arrow-compatible memory layout
-- 🔄 **In progress**: FileStream implementation with adaptive batch sizing
+- ✅ **FileStream implementation**: with adaptive batch sizing
 - ⏳ **Planned**: Memory optimizations, parallelization, and advanced operations
 
 **Note**: The streaming system currently supports basic operations only. Complex operations (joins, aggregations, binary expressions in filters) still need implementation.
